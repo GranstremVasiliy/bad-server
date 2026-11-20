@@ -7,6 +7,9 @@ import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'
 import getPagination from '../utils/pagination'
 import getSearchRegex from '../utils/search'
+import getSorting from '../utils/sorting'
+import getNumberRange from '../utils/numberRange'
+import getDateRange from '../utils/dateRange'
 
 // TODO: Добавить guard admin
 // eslint-disable-next-line max-len
@@ -18,8 +21,6 @@ export const getCustomers = async (
 ) => {
     try {
         const {
-            sortField = 'createdAt',
-            sortOrder = 'desc',
             registrationDateFrom,
             registrationDateTo,
             lastOrderDateFrom,
@@ -39,64 +40,49 @@ export const getCustomers = async (
 
         const filters: FilterQuery<Partial<IUser>> = {}
 
-        if (registrationDateFrom) {
-            filters.createdAt = {
-                ...filters.createdAt,
-                $gte: new Date(registrationDateFrom as string),
-            }
+        const registrationDateRange = getDateRange(
+            registrationDateFrom,
+            registrationDateTo,
+            'registrationDateFrom',
+            'registrationDateTo'
+        )
+
+        if (registrationDateRange) {
+            filters.createdAt = registrationDateRange
         }
 
-        if (registrationDateTo) {
-            const endOfDay = new Date(registrationDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
-            filters.createdAt = {
-                ...filters.createdAt,
-                $lte: endOfDay,
-            }
+        const lastOrderDateRange = getDateRange(
+            lastOrderDateFrom,
+            lastOrderDateTo,
+            'lastOrderDateFrom',
+            'lastOrderDateTo'
+        )
+
+        if (lastOrderDateRange) {
+            filters.lastOrderDate = lastOrderDateRange
         }
 
-        if (lastOrderDateFrom) {
-            filters.lastOrderDate = {
-                ...filters.lastOrderDate,
-                $gte: new Date(lastOrderDateFrom as string),
-            }
+        const totalAmountRange = getNumberRange(
+            totalAmountFrom,
+            totalAmountTo,
+            'totalAmountFrom',
+            'totalAmountTo'
+        )
+
+        if (totalAmountRange) {
+            filters.totalAmount = totalAmountRange
         }
 
-        if (lastOrderDateTo) {
-            const endOfDay = new Date(lastOrderDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
-            filters.lastOrderDate = {
-                ...filters.lastOrderDate,
-                $lte: endOfDay,
-            }
-        }
+        const orderCountRange = getNumberRange(
+            orderCountFrom,
+            orderCountTo,
+            'orderCountFrom',
+            'orderCountTo',
+            true
+        )
 
-        if (totalAmountFrom) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $gte: Number(totalAmountFrom),
-            }
-        }
-
-        if (totalAmountTo) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $lte: Number(totalAmountTo),
-            }
-        }
-
-        if (orderCountFrom) {
-            filters.orderCount = {
-                ...filters.orderCount,
-                $gte: Number(orderCountFrom),
-            }
-        }
-
-        if (orderCountTo) {
-            filters.orderCount = {
-                ...filters.orderCount,
-                $lte: Number(orderCountTo),
-            }
+        if (orderCountRange) {
+            filters.orderCount = orderCountRange
         }
 
         if (searchRegex) {
@@ -115,11 +101,13 @@ export const getCustomers = async (
             ]
         }
 
-        const sort: { [key: string]: any } = {}
-
-        if (sortField && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
-        }
+        const sort = getSorting(req.query.sortField, req.query.sortOrder, [
+            'createdAt',
+            'name',
+            'totalAmount',
+            'orderCount',
+            'lastOrderDate',
+        ])
 
         const options = {
             sort,

@@ -1,11 +1,20 @@
 import { NextFunction, Request, Response } from 'express'
-import { FilterQuery, Error as MongooseError, Types } from 'mongoose'
+import {
+    FilterQuery,
+    Error as MongooseError,
+    PipelineStage,
+    Types,
+} from 'mongoose'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import Order, { IOrder } from '../models/order'
 import Product, { IProduct } from '../models/product'
 import User from '../models/user'
 import getPagination from '../utils/pagination'
+import getSearchRegex from '../utils/search'
+import getSorting from '../utils/sorting'
+import getNumberRange from '../utils/numberRange'
+import getDateRange from '../utils/dateRange'
 
 // eslint-disable-next-line max-len
 // GET /orders?page=2&limit=5&sort=totalAmount&order=desc&orderDateFrom=2024-07-01&orderDateTo=2024-08-01&status=delivering&totalAmountFrom=100&totalAmountTo=1000&search=%2B1
@@ -17,20 +26,26 @@ export const getOrders = async (
 ) => {
     try {
         const {
-            sortField = 'createdAt',
-            sortOrder = 'desc',
             status,
             totalAmountFrom,
             totalAmountTo,
             orderDateFrom,
             orderDateTo,
-            search,
         } = req.query
 
         const { page, limit, skip } = getPagination(
             req.query.page,
             req.query.limit
         )
+
+        const sort = getSorting(req.query.sortField, req.query.sortOrder, [
+            'createdAt',
+            'orderNumber',
+            'totalAmount',
+            'status',
+        ])
+
+        const searchRegex = getSearchRegex(req.query.search)
 
         const filters: FilterQuery<Partial<IOrder>> = {}
 
@@ -52,36 +67,32 @@ export const getOrders = async (
             filters.status = status
         }
 
-        if (totalAmountFrom) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $gte: Number(totalAmountFrom),
-            }
+        const totalAmountRange = getNumberRange(
+            totalAmountFrom,
+            totalAmountTo,
+            'totalAmountFrom',
+            'totalAmountTo'
+        )
+
+        if (totalAmountRange) {
+            filters.totalAmount = totalAmountRange
         }
 
-        if (totalAmountTo) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $lte: Number(totalAmountTo),
-            }
+        const orderDateRange = getDateRange(
+            orderDateFrom,
+            orderDateTo,
+            'orderDateFrom',
+            'orderDateTo'
+        )
+
+        if (orderDateRange) {
+            filters.createdAt = orderDateRange
         }
 
-        if (orderDateFrom) {
-            filters.createdAt = {
-                ...filters.createdAt,
-                $gte: new Date(orderDateFrom as string),
-            }
-        }
-
-        if (orderDateTo) {
-            filters.createdAt = {
-                ...filters.createdAt,
-                $lte: new Date(orderDateTo as string),
-            }
-        }
-
-        const aggregatePipeline: any[] = [
-            { $match: filters },
+        const aggregatePipeline: PipelineStage[] = [
+            {
+                $match: filters,
+            },
             {
                 $lookup: {
                     from: 'products',
@@ -98,18 +109,32 @@ export const getOrders = async (
                     as: 'customer',
                 },
             },
-            { $unwind: '$customer' },
-            { $unwind: '$products' },
+            {
+                $unwind: '$customer',
+            },
+            {
+                $project: {
+                    'customer.password': 0,
+                    'customer.tokens': 0,
+                },
+            },
         ]
 
-        if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
-            const searchNumber = Number(search)
+        if (searchRegex) {
+            const searchConditions: FilterQuery<IOrder>[] = [
+                {
+                    'products.title': searchRegex,
+                },
+            ]
 
-            const searchConditions: any[] = [{ 'products.title': searchRegex }]
+            if (typeof req.query.search === 'string') {
+                const searchNumber = Number(req.query.search.trim())
 
-            if (!Number.isNaN(searchNumber)) {
-                searchConditions.push({ orderNumber: searchNumber })
+                if (Number.isSafeInteger(searchNumber)) {
+                    searchConditions.push({
+                        orderNumber: searchNumber,
+                    })
+                }
             }
 
             aggregatePipeline.push({
@@ -117,35 +142,50 @@ export const getOrders = async (
                     $or: searchConditions,
                 },
             })
-
-            filters.$or = searchConditions
         }
 
-        const sort: { [key: string]: any } = {}
+        aggregatePipeline.push({
+            $facet: {
+                orders: [
+                    {
+                        $sort: {
+                            ...sort,
+                            _id: 1,
+                        },
+                    },
+                    {
+                        $skip: skip,
+                    },
+                    {
+                        $limit: limit,
+                    },
+                    {
+                        $project: {
+                            _id: 1,
+                            orderNumber: 1,
+                            status: 1,
+                            totalAmount: 1,
+                            products: 1,
+                            customer: 1,
+                            createdAt: 1,
+                        },
+                    },
+                ],
+                metadata: [
+                    {
+                        $count: 'totalOrders',
+                    },
+                ],
+            },
+        })
 
-        if (sortField && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
-        }
+        const [result] = await Order.aggregate<{
+            orders: IOrder[]
+            metadata: { totalOrders: number }[]
+        }>(aggregatePipeline)
 
-        aggregatePipeline.push(
-            { $sort: sort },
-            { $skip: skip },
-            { $limit: limit },
-            {
-                $group: {
-                    _id: '$_id',
-                    orderNumber: { $first: '$orderNumber' },
-                    status: { $first: '$status' },
-                    totalAmount: { $first: '$totalAmount' },
-                    products: { $push: '$products' },
-                    customer: { $first: '$customer' },
-                    createdAt: { $first: '$createdAt' },
-                },
-            }
-        )
-
-        const orders = await Order.aggregate(aggregatePipeline)
-        const totalOrders = await Order.countDocuments(filters)
+        const orders = result?.orders ?? []
+        const totalOrders = result?.metadata[0]?.totalOrders ?? 0
         const totalPages = Math.ceil(totalOrders / limit)
 
         res.status(200).json({
@@ -169,7 +209,7 @@ export const getOrdersCurrentUser = async (
 ) => {
     try {
         const userId = res.locals.user._id
-        const { search } = req.query
+        const searchRegex = getSearchRegex(req.query.search)
 
         const { page, limit, skip } = getPagination(
             req.query.page,
@@ -203,10 +243,8 @@ export const getOrdersCurrentUser = async (
 
         let orders = user.orders as unknown as IOrder[]
 
-        if (search) {
-            // если не экранировать то получаем Invalid regular expression: /+1/i: Nothing to repeat
-            const searchRegex = new RegExp(search as string, 'i')
-            const searchNumber = Number(search)
+        if (searchRegex) {
+            const searchNumber = Number(req.query.search)
             const products = await Product.find({ title: searchRegex })
             const productIds = products.map((product) => product._id)
 
