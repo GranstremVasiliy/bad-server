@@ -1,6 +1,18 @@
 import { Joi, celebrate } from 'celebrate'
 import { Types } from 'mongoose'
 
+const passwordSchema = Joi.string()
+    .max(72)
+    .custom((value: string, helpers) => {
+        if (Buffer.byteLength(value, 'utf8') > 72) {
+            return helpers.error('any.invalid')
+        }
+
+        return value
+    })
+    .messages({
+        'any.invalid': 'Пароль не должен превышать 72 байта в UTF-8',
+    })
 // eslint-disable-next-line no-useless-escape
 export const phoneRegExp = /^(\+\d+)?(?:\s|-?|\(?\d+\)?)+$/
 
@@ -101,35 +113,34 @@ export const validateObjId = celebrate({
 })
 
 export const validateUserBody = celebrate({
-    body: Joi.object().keys({
-        name: Joi.string().min(2).max(30).messages({
-            'string.min': 'Минимальная длина поля "name" - 2',
-            'string.max': 'Максимальная длина поля "name" - 30',
-        }),
-        password: Joi.string().min(6).required().messages({
-            'string.empty': 'Поле "password" должно быть заполнено',
-        }),
-        email: Joi.string()
-            .required()
-            .email()
-            .message('Поле "email" должно быть валидным email-адресом')
-            .messages({
-                'string.empty': 'Поле "email" должно быть заполнено',
-            }),
-    }),
+    body: Joi.object()
+        .keys({
+            name: Joi.string().trim().min(2).max(30),
+            email: Joi.string().trim().email().max(254).required(),
+            password: passwordSchema.min(6).required(),
+        })
+        .unknown(false),
 })
 
 export const validateAuthentication = celebrate({
-    body: Joi.object().keys({
-        email: Joi.string()
-            .required()
-            .email()
-            .message('Поле "email" должно быть валидным email-адресом')
-            .messages({
-                'string.required': 'Поле "email" должно быть заполнено',
-            }),
-        password: Joi.string().required().messages({
-            'string.empty': 'Поле "password" должно быть заполнено',
-        }),
-    }),
+    body: Joi.object()
+        .keys({
+            email: Joi.string().trim().email().max(254).required(),
+            password: passwordSchema.required(),
+        })
+        .unknown(false),
+})
+
+export const validateProfileUpdateBody = celebrate({
+    body: Joi.object()
+        .keys({
+            name: Joi.string().trim().min(2).max(30),
+            email: Joi.string().trim().email().max(254),
+            phone: Joi.string()
+                .trim()
+                .max(30)
+                .pattern(/^[+\d()\s-]+$/),
+        })
+        .min(1)
+        .unknown(false),
 })

@@ -3,7 +3,8 @@ import crypto from 'crypto'
 import jwt from 'jsonwebtoken'
 import mongoose, { Document, HydratedDocument, Model, Types } from 'mongoose'
 import validator from 'validator'
-import md5 from 'md5'
+import bcrypt from 'bcryptjs'
+import BadRequestError from '../errors/bad-request-error'
 
 import { ACCESS_TOKEN, REFRESH_TOKEN } from '../config'
 import UnauthorizedError from '../errors/unauthorized-error'
@@ -106,7 +107,13 @@ const userSchema = new mongoose.Schema<IUser, IUserModel, IUserMethods>(
         toJSON: {
             virtuals: true,
             transform: (_doc, ret) => {
-                const { tokens: _tokens, password: _password, _id, roles: _roles, ...rest } = ret
+                const {
+                    tokens: _tokens,
+                    password: _password,
+                    _id,
+                    roles: _roles,
+                    ...rest
+                } = ret
                 return rest
             },
         },
@@ -117,8 +124,15 @@ const userSchema = new mongoose.Schema<IUser, IUserModel, IUserMethods>(
 userSchema.pre('save', async function hashingPassword(next) {
     try {
         if (this.isModified('password')) {
-            this.password = md5(this.password)
+            if (Buffer.byteLength(this.password, 'utf8') > 72) {
+                throw new BadRequestError(
+                    'Пароль не должен превышать 72 байта в UTF-8'
+                )
+            }
+
+            this.password = await bcrypt.hash(this.password, 10)
         }
+
         next()
     } catch (error) {
         next(error as Error)
@@ -153,8 +167,10 @@ userSchema.methods.generateRefreshToken =
             },
             REFRESH_TOKEN.secret,
             {
+                algorithm: 'HS256',
                 expiresIn: REFRESH_TOKEN.expiry,
                 subject: user.id.toString(),
+                jwtid: crypto.randomUUID(),
             }
         )
 
@@ -175,15 +191,24 @@ userSchema.statics.findUserByCredentials = async function findByCredentials(
     email: string,
     password: string
 ) {
+    if (
+        typeof email !== 'string' ||
+        typeof password !== 'string' ||
+        Buffer.byteLength(password, 'utf8') > 72
+    ) {
+        throw new UnauthorizedError('Неправильные почта или пароль')
+    }
+
     const user = await this.findOne({ email })
         .select('+password')
         .orFail(() => new UnauthorizedError('Неправильные почта или пароль'))
-    const passwdMatch = md5(password) === user.password
-    if (!passwdMatch) {
-        return Promise.reject(
-            new UnauthorizedError('Неправильные почта или пароль')
-        )
+
+    const passwordMatches = await bcrypt.compare(password, user.password)
+
+    if (!passwordMatches) {
+        throw new UnauthorizedError('Неправильные почта или пароль')
     }
+
     return user
 }
 

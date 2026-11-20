@@ -90,29 +90,55 @@ const deleteRefreshTokenInUser = async (
     _res: Response,
     _next: NextFunction
 ) => {
-    const { cookies } = req
-    const rfTkn = cookies[REFRESH_TOKEN.cookie.name]
+    const refreshToken = req.cookies?.[REFRESH_TOKEN.cookie.name]
 
-    if (!rfTkn) {
-        throw new UnauthorizedError('Не валидный токен')
+    if (typeof refreshToken !== 'string' || !refreshToken) {
+        throw new UnauthorizedError('Необходим refresh-токен')
     }
 
-    const decodedRefreshTkn = jwt.verify(
-        rfTkn,
-        REFRESH_TOKEN.secret
-    ) as JwtPayload
-    const user = await User.findOne({
-        _id: decodedRefreshTkn._id,
-    }).orFail(() => new UnauthorizedError('Пользователь не найден в базе'))
+    let payload: string | JwtPayload
 
-    const rTknHash = crypto
+    try {
+        payload = jwt.verify(refreshToken, REFRESH_TOKEN.secret, {
+            algorithms: ['HS256'],
+        })
+    } catch {
+        throw new UnauthorizedError(
+            'Refresh-токен недействителен или срок его действия истёк'
+        )
+    }
+
+    if (
+        typeof payload === 'string' ||
+        typeof payload._id !== 'string' ||
+        !/^[a-f\d]{24}$/i.test(payload._id)
+    ) {
+        throw new UnauthorizedError('Некорректные данные refresh-токена')
+    }
+
+    const tokenHash = crypto
         .createHmac('sha256', REFRESH_TOKEN.secret)
-        .update(rfTkn)
+        .update(refreshToken)
         .digest('hex')
 
-    user.tokens = user.tokens.filter((tokenObj) => tokenObj.token !== rTknHash)
+    const user = await User.findOneAndUpdate(
+        {
+            _id: payload._id,
+            'tokens.token': tokenHash,
+        },
+        {
+            $pull: {
+                tokens: { token: tokenHash },
+            },
+        },
+        {
+            new: true,
+        }
+    )
 
-    await user.save()
+    if (!user) {
+        throw new UnauthorizedError('Refresh-токен отозван или уже использован')
+    }
 
     return user
 }
@@ -191,18 +217,55 @@ const updateCurrentUser = async (
     next: NextFunction
 ) => {
     const userId = res.locals.user._id
+
     try {
-        const updatedUser = await User.findByIdAndUpdate(userId, req.body, {
-            new: true,
-        }).orFail(
+        const { name, email, phone } = req.body
+
+        const updates: {
+            name?: string
+            email?: string
+            phone?: string
+        } = {}
+
+        if (name !== undefined) {
+            updates.name = name
+        }
+
+        if (email !== undefined) {
+            updates.email = email
+        }
+
+        if (phone !== undefined) {
+            updates.phone = phone
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            { $set: updates },
+            {
+                new: true,
+                runValidators: true,
+            }
+        ).orFail(
             () =>
                 new NotFoundError(
                     'Пользователь по заданному id отсутствует в базе'
                 )
         )
+
         res.status(200).json(updatedUser)
     } catch (error) {
-        next(error)
+        if (error instanceof MongooseError.ValidationError) {
+            return next(new BadRequestError(error.message))
+        }
+
+        if (error instanceof Error && error.message.includes('E11000')) {
+            return next(
+                new ConflictError('Пользователь с таким email уже существует')
+            )
+        }
+
+        return next(error)
     }
 }
 

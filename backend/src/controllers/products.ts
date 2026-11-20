@@ -7,18 +7,24 @@ import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
 import Product from '../models/product'
 import movingFile from '../utils/movingFile'
+import getPagination from '../utils/pagination'
 
 // GET /product
 const getProducts = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { page = 1, limit = 5 } = req.query
+        const { page, limit, skip } = getPagination(
+            req.query.page,
+            req.query.limit,
+            5
+        )
+
         const options = {
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+            skip,
+            limit,
         }
         const products = await Product.find({}, null, options)
         const totalProducts = await Product.countDocuments({})
-        const totalPages = Math.ceil(totalProducts / Number(limit))
+        const totalPages = Math.ceil(totalProducts / limit)
         return res.send({
             items: products,
             pagination: {
