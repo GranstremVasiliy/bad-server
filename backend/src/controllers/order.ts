@@ -1,14 +1,9 @@
 import { NextFunction, Request, Response } from 'express'
-import {
-    FilterQuery,
-    Error as MongooseError,
-    PipelineStage,
-    Types,
-} from 'mongoose'
+import { FilterQuery, Error as MongooseError, PipelineStage } from 'mongoose'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import Order, { IOrder } from '../models/order'
-import Product, { IProduct } from '../models/product'
+import Product from '../models/product'
 import User from '../models/user'
 import getPagination from '../utils/pagination'
 import getSearchRegex from '../utils/search'
@@ -116,6 +111,7 @@ export const getOrders = async (
                 $project: {
                     'customer.password': 0,
                     'customer.tokens': 0,
+                    'customer.salt': 0,
                 },
             },
         ]
@@ -300,7 +296,13 @@ export const getOrderByNumber = async (
         const order = await Order.findOne({
             orderNumber: req.params.orderNumber,
         })
-            .populate(['customer', 'products'])
+            .populate([
+                'products',
+                {
+                    path: 'customer',
+                    select: '-password -tokens -salt',
+                },
+            ])
             .orFail(
                 () =>
                     new NotFoundError(
@@ -321,33 +323,38 @@ export const getOrderCurrentUserByNumber = async (
     res: Response,
     next: NextFunction
 ) => {
-    const userId = res.locals.user._id
     try {
+        const userId = res.locals.user._id
+
         const order = await Order.findOne({
             orderNumber: req.params.orderNumber,
+            customer: userId,
         })
-            .populate(['customer', 'products'])
+            .populate([
+                'products',
+                {
+                    path: 'customer',
+                    select: '-password -tokens -salt',
+                },
+            ])
             .orFail(
                 () =>
                     new NotFoundError(
-                        'Заказ по заданному id отсутствует в базе'
+                        'Заказ по заданному номеру отсутствует в базе'
                     )
             )
-        if (!order.customer._id.equals(userId)) {
-            // Если нет доступа не возвращаем 403, а отдаем 404
-            return next(
-                new NotFoundError('Заказ по заданному id отсутствует в базе')
-            )
-        }
+
         return res.status(200).json(order)
     } catch (error) {
         if (error instanceof MongooseError.CastError) {
-            return next(new BadRequestError('Передан не валидный ID заказа'))
+            return next(
+                new BadRequestError('Передан некорректный номер заказа')
+            )
         }
+
         return next(error)
     }
 }
-
 // POST /product
 export const createOrder = async (
     req: Request,
@@ -355,30 +362,73 @@ export const createOrder = async (
     next: NextFunction
 ) => {
     try {
-        const basket: IProduct[] = []
-        const products = await Product.find<IProduct>({})
         const userId = res.locals.user._id
         const { address, payment, phone, total, email, items, comment } =
             req.body
 
-        items.forEach((id: Types.ObjectId) => {
-            const product = products.find((p) => p._id.equals(id))
+        if (
+            !Array.isArray(items) ||
+            items.length === 0 ||
+            items.length > 100 ||
+            !items.every(
+                (id: unknown) =>
+                    typeof id === 'string' && /^[a-fA-F0-9]{24}$/.test(id)
+            )
+        ) {
+            throw new BadRequestError(
+                'Передайте от 1 до 100 корректных id товаров'
+            )
+        }
+
+        if (typeof total !== 'number' || !Number.isFinite(total) || total < 0) {
+            throw new BadRequestError(
+                'Сумма заказа должна быть неотрицательным числом'
+            )
+        }
+
+        const itemIds: string[] = items.map((id: string) => id.toLowerCase())
+
+        const uniqueItemIds = [...new Set(itemIds)]
+
+        const products = await Product.find({
+            _id: { $in: uniqueItemIds },
+        }).select('_id price')
+
+        const productsById = new Map(
+            products.map((product) => [product._id.toString(), product])
+        )
+
+        const totalBasket = itemIds.reduce((sum, id) => {
+            const product = productsById.get(id)
+
             if (!product) {
                 throw new BadRequestError(`Товар с id ${id} не найден`)
             }
-            if (product.price === null) {
-                throw new BadRequestError(`Товар с id ${id} не продается`)
+
+            if (
+                typeof product.price !== 'number' ||
+                !Number.isFinite(product.price) ||
+                product.price < 0
+            ) {
+                throw new BadRequestError(
+                    `Товар с id ${id} недоступен для покупки`
+                )
             }
-            return basket.push(product)
-        })
-        const totalBasket = basket.reduce((a, c) => a + c.price, 0)
+
+            return sum + product.price
+        }, 0)
+
+        if (!Number.isFinite(totalBasket)) {
+            throw new BadRequestError('Не удалось рассчитать сумму заказа')
+        }
+
         if (totalBasket !== total) {
-            return next(new BadRequestError('Неверная сумма заказа'))
+            throw new BadRequestError('Неверная сумма заказа')
         }
 
         const newOrder = new Order({
-            totalAmount: total,
-            products: items,
+            totalAmount: totalBasket,
+            products: itemIds,
             payment,
             phone,
             email,
@@ -386,18 +436,32 @@ export const createOrder = async (
             customer: userId,
             deliveryAddress: address,
         })
-        const populateOrder = await newOrder.populate(['customer', 'products'])
-        await populateOrder.save()
 
-        return res.status(200).json(populateOrder)
+        await newOrder.save()
+
+        await newOrder.populate([
+            'products',
+            {
+                path: 'customer',
+                select: '-password -tokens -salt',
+            },
+        ])
+
+        return res.status(200).json(newOrder)
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
             return next(new BadRequestError(error.message))
         }
+
+        if (error instanceof MongooseError.CastError) {
+            return next(
+                new BadRequestError('Переданы некорректные данные заказа')
+            )
+        }
+
         return next(error)
     }
 }
-
 // Update an order
 export const updateOrder = async (
     req: Request,
@@ -417,7 +481,13 @@ export const updateOrder = async (
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
-            .populate(['customer', 'products'])
+            .populate([
+                'products',
+                {
+                    path: 'customer',
+                    select: '-password -tokens -salt',
+                },
+            ])
         return res.status(200).json(updatedOrder)
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
@@ -444,7 +514,13 @@ export const deleteOrder = async (
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
-            .populate(['customer', 'products'])
+            .populate([
+                'products',
+                {
+                    path: 'customer',
+                    select: '-password -tokens -salt',
+                },
+            ])
         return res.status(200).json(deletedOrder)
     } catch (error) {
         if (error instanceof MongooseError.CastError) {
