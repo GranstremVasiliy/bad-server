@@ -77,7 +77,7 @@ export const uploadFile = async (
     res: Response,
     next: NextFunction
 ) => {
-    const file = req.file
+    const { file } = req
 
     if (!file) {
         return next(new BadRequestError('Файл не загружен'))

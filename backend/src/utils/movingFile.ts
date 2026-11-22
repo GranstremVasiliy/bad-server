@@ -31,7 +31,7 @@ async function movingFile(
     try {
         await copyFile(sourcePath, destinationPath, constants.COPYFILE_EXCL)
     } catch (error) {
-        const { code } = error as NodeJS.ErrnoException
+        const { code } = error as { code?: string }
 
         if (code === 'ENOENT') {
             throw new BadRequestError(

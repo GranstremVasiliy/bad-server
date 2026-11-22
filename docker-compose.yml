@@ -30,8 +30,6 @@ services:
       - ./backend/src:/app/src
       - public:/app/src/public
       - upload_temp:/app/upload-temp
-    ports:
-      - 3000:3000
     networks:
       - internal
     depends_on:

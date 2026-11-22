@@ -265,7 +265,7 @@ export const getOrdersCurrentUser = async (
                     'products',
                     {
                         path: 'customer',
-                        select: '-password -tokens',
+                        select: '-password -tokens -salt',
                     },
                 ]),
             Order.countDocuments(filters),

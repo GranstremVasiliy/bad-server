@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { mkdir } from 'fs'
-import { TEMP_UPLOAD_DIR } from '../utils/uploadPaths'
 import multer from 'multer'
+import { TEMP_UPLOAD_DIR } from '../utils/uploadPaths'
 import BadRequestError from '../errors/bad-request-error'
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024

@@ -74,33 +74,37 @@ export default function AdminEditProduct() {
     }, [currentProduct])
 
     const handleUpdateProduct = async () => {
-        if (!selectedCategory) {
+        if (!selectedCategory || !editId) {
             return
         }
+
         const dataProduct = {
             ...values,
-            category: selectedCategory?.title as keyof typeof CATEGORY_CLASSES,
+            category: selectedCategory.title as keyof typeof CATEGORY_CLASSES,
             image: selectedFile ? selectedFile : undefined,
             price: values.price ? values.price : null,
         }
 
-        editId &&
-            updateProduct({ data: dataProduct, id: editId })
-                .unwrap()
-                .then(() => navigateAdminList())
-                .catch((error) => toast.error(error.message))
+        return updateProduct({ data: dataProduct, id: editId })
+            .unwrap()
+            .then(() => navigateAdminList())
+            .catch((error) => toast.error(error.message))
     }
+
     const handleFormSubmit = (e: SyntheticEvent<HTMLFormElement>) => {
         e.preventDefault()
         handleUpdateProduct()
     }
 
     const handleDeleteProduct = () => {
-        editId &&
-            deleteProduct(editId)
-                .unwrap()
-                .then(() => navigateAdminList())
-                .catch((error) => toast.error(error.message))
+        if (!editId) {
+            return
+        }
+
+        return deleteProduct(editId)
+            .unwrap()
+            .then(() => navigateAdminList())
+            .catch((error) => toast.error(error.message))
     }
 
     return (

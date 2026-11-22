@@ -9,10 +9,14 @@ import { DB_ADDRESS } from './config'
 import errorHandler from './middlewares/error-handler'
 import serveStatic from './middlewares/serverStatic'
 import routes from './routes'
+import { apiLimiter, authLimiter } from './middlewares/rateLimit'
 
 const { PORT = 3000 } = process.env
 const app = express()
+app.set('trust proxy', 1)
 
+app.use(apiLimiter)
+app.use(['/auth/login', '/auth/register'], authLimiter)
 app.use(cookieParser())
 
 app.use(cors())
