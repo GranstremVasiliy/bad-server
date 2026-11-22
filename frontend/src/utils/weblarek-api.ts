@@ -1,5 +1,4 @@
 import { API_URL, CDN_URL } from '@constants'
-
 import {
     ICustomerPaginationResult,
     ICustomerResult,
@@ -46,19 +45,24 @@ class Api {
     protected handleResponse<T>(response: Response): Promise<T> {
         return response.ok
             ? response.json()
-            : response
-                  .json()
-                  .then((err) =>
-                      Promise.reject({ ...err, statusCode: response.status })
-                  )
+            : response.json().then((err) =>
+                  Promise.reject({
+                      ...err,
+                      statusCode: response.status,
+                  })
+              )
     }
 
-    protected async request<T>(endpoint: string, options: RequestInit) {
+    protected async request<T>(
+        endpoint: string,
+        options: RequestInit
+    ): Promise<T> {
         try {
             const res = await fetch(`${this.baseUrl}${endpoint}`, {
                 ...this.options,
                 ...options,
             })
+
             return await this.handleResponse<T>(res)
         } catch (error) {
             return Promise.reject(error)
@@ -67,7 +71,7 @@ class Api {
 
     private refreshToken = () => {
         return this.request<UserResponseToken>('/auth/token', {
-            method: 'GET',
+            method: 'POST',
             credentials: 'include',
         })
     }
@@ -75,21 +79,34 @@ class Api {
     protected requestWithRefresh = async <T>(
         endpoint: string,
         options: RequestInit
-    ) => {
+    ): Promise<T> => {
         try {
             return await this.request<T>(endpoint, options)
         } catch (error) {
-            const refreshData = await this.refreshToken()
-            if (!refreshData.success) {
-                return Promise.reject(refreshData)
+            const isUnauthorized =
+                typeof error === 'object' &&
+                error !== null &&
+                'statusCode' in error &&
+                error.statusCode === 401
+
+            if (!isUnauthorized) {
+                throw error
             }
+
+            const refreshData = await this.refreshToken()
+
+            if (!refreshData.success) {
+                throw refreshData
+            }
+
             setCookie('accessToken', refreshData.accessToken)
-            return await this.request<T>(endpoint, {
+
+            const headers = new Headers(options.headers)
+            headers.set('Authorization', `Bearer ${refreshData.accessToken}`)
+
+            return this.request<T>(endpoint, {
                 ...options,
-                headers: {
-                    ...options.headers,
-                    Authorization: `Bearer ${getCookie('accessToken')}`,
-                },
+                headers,
             })
         }
     }
@@ -112,15 +129,15 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
     }
 
     getProductItem = (id: string): Promise<IProduct> => {
-        return this.request<IProduct>(`/product/${id}`, { method: 'GET' }).then(
-            (data: IProduct) => ({
-                ...data,
-                image: {
-                    ...data.image,
-                    fileName: this.cdn + data.image.fileName,
-                },
-            })
-        )
+        return this.request<IProduct>(`/product/${id}`, {
+            method: 'GET',
+        }).then((data: IProduct) => ({
+            ...data,
+            image: {
+                ...data.image,
+                fileName: this.cdn + data.image.fileName,
+            },
+        }))
     }
 
     getProductList = (
@@ -129,6 +146,7 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
         const queryParams = new URLSearchParams(
             filters as Record<string, string>
         ).toString()
+
         return this.request<IProductPaginationResult>(
             `/product?${queryParams}`,
             {
@@ -177,6 +195,7 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
         const queryParams = new URLSearchParams(
             filters as Record<string, string>
         ).toString()
+
         return this.requestWithRefresh<IOrderPaginationResult>(
             `/order/all?${queryParams}`,
             {
@@ -194,6 +213,7 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
         const queryParams = new URLSearchParams(
             filters as Record<string, string>
         ).toString()
+
         return this.requestWithRefresh<IOrderPaginationResult>(
             `/order/all/me?${queryParams}`,
             {
@@ -208,7 +228,9 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
     getOrderByNumber = (orderNumber: string): Promise<IOrderResult> => {
         return this.requestWithRefresh<IOrderResult>(`/order/${orderNumber}`, {
             method: 'GET',
-            headers: { Authorization: `Bearer ${getCookie('accessToken')}` },
+            headers: {
+                Authorization: `Bearer ${getCookie('accessToken')}`,
+            },
         })
     }
 
@@ -251,14 +273,18 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
     getUser = () => {
         return this.requestWithRefresh<UserResponse>('/auth/user', {
             method: 'GET',
-            headers: { Authorization: `Bearer ${getCookie('accessToken')}` },
+            headers: {
+                Authorization: `Bearer ${getCookie('accessToken')}`,
+            },
         })
     }
 
     getUserRoles = () => {
         return this.requestWithRefresh<string[]>('/auth/user/roles', {
             method: 'GET',
-            headers: { Authorization: `Bearer ${getCookie('accessToken')}` },
+            headers: {
+                Authorization: `Bearer ${getCookie('accessToken')}`,
+            },
         })
     }
 
@@ -268,6 +294,7 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
         const queryParams = new URLSearchParams(
             filters as Record<string, string>
         ).toString()
+
         return this.requestWithRefresh<ICustomerPaginationResult>(
             `/customers?${queryParams}`,
             {
@@ -293,13 +320,12 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
 
     logoutUser = () => {
         return this.request<ServerResponse<unknown>>('/auth/logout', {
-            method: 'GET',
+            method: 'POST',
             credentials: 'include',
         })
     }
 
     createProduct = (data: Omit<IProduct, '_id'>) => {
-        console.log(data)
         return this.requestWithRefresh<IProduct>('/product', {
             method: 'POST',
             body: JSON.stringify(data),

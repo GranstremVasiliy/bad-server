@@ -10,6 +10,7 @@ import getSearchRegex from '../utils/search'
 import getSorting from '../utils/sorting'
 import getNumberRange from '../utils/numberRange'
 import getDateRange from '../utils/dateRange'
+import sanitizeComment from '../utils/sanitizeComment'
 
 // eslint-disable-next-line max-len
 // GET /orders?page=2&limit=5&sort=totalAmount&order=desc&orderDateFrom=2024-07-01&orderDateTo=2024-08-01&status=delivering&totalAmountFrom=100&totalAmountTo=1000&search=%2B1
@@ -366,6 +367,8 @@ export const createOrder = async (
         const { address, payment, phone, total, email, items, comment } =
             req.body
 
+        const cleanComment = sanitizeComment(comment)
+
         if (
             !Array.isArray(items) ||
             items.length === 0 ||
@@ -432,7 +435,7 @@ export const createOrder = async (
             payment,
             phone,
             email,
-            comment,
+            comment: cleanComment,
             customer: userId,
             deliveryAddress: address,
         })
