@@ -1,13 +1,13 @@
 import { NextFunction, Request, Response } from 'express'
 import { constants } from 'http2'
 import { Error as MongooseError } from 'mongoose'
-import { join } from 'path'
 import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
 import Product from '../models/product'
 import movingFile from '../utils/movingFile'
 import getPagination from '../utils/pagination'
+import { PUBLIC_UPLOAD_DIR, TEMP_UPLOAD_DIR } from '../utils/uploadPaths'
 
 // GET /product
 const getProducts = async (req: Request, res: Response, next: NextFunction) => {
@@ -50,11 +50,7 @@ const createProduct = async (
 
         // Переносим картинку из временной папки
         if (image) {
-            movingFile(
-                image.fileName,
-                join(__dirname, `../public/${process.env.UPLOAD_PATH_TEMP}`),
-                join(__dirname, `../public/${process.env.UPLOAD_PATH}`)
-            )
+            await movingFile(image.fileName, TEMP_UPLOAD_DIR, PUBLIC_UPLOAD_DIR)
         }
 
         const product = await Product.create({
@@ -89,13 +85,12 @@ const updateProduct = async (
         const { productId } = req.params
         const { image } = req.body
 
-        // Переносим картинку из временной папки
-        if (image) {
-            movingFile(
-                image.fileName,
-                join(__dirname, `../public/${process.env.UPLOAD_PATH_TEMP}`),
-                join(__dirname, `../public/${process.env.UPLOAD_PATH}`)
-            )
+        const currentProduct = await Product.findById(productId).orFail(
+            () => new NotFoundError('Нет товара по заданному id')
+        )
+
+        if (image && image.fileName !== currentProduct.image?.fileName) {
+            await movingFile(image.fileName, TEMP_UPLOAD_DIR, PUBLIC_UPLOAD_DIR)
         }
 
         const product = await Product.findByIdAndUpdate(

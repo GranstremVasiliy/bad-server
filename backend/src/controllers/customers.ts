@@ -10,6 +10,7 @@ import getSearchRegex from '../utils/search'
 import getSorting from '../utils/sorting'
 import getNumberRange from '../utils/numberRange'
 import getDateRange from '../utils/dateRange'
+import Product from '../models/product'
 
 // TODO: Добавить guard admin
 // eslint-disable-next-line max-len
@@ -86,18 +87,32 @@ export const getCustomers = async (
         }
 
         if (searchRegex) {
-            const orders = await Order.find(
-                {
-                    $or: [{ deliveryAddress: searchRegex }],
-                },
-                '_id'
-            )
+            const productIds = await Product.find({
+                title: searchRegex,
+            }).distinct('_id')
 
-            const orderIds = orders.map((order) => order._id)
+            const customerIds = await Order.find({
+                $or: [
+                    {
+                        deliveryAddress: searchRegex,
+                    },
+                    {
+                        products: {
+                            $in: productIds,
+                        },
+                    },
+                ],
+            }).distinct('customer')
 
             filters.$or = [
-                { name: searchRegex },
-                { lastOrder: { $in: orderIds } },
+                {
+                    name: searchRegex,
+                },
+                {
+                    _id: {
+                        $in: customerIds,
+                    },
+                },
             ]
         }
 
@@ -156,13 +171,24 @@ export const getCustomerById = async (
     next: NextFunction
 ) => {
     try {
-        const user = await User.findById(req.params.id).populate([
-            'orders',
-            'lastOrder',
-        ])
+        const user = await User.findById(req.params.id)
+            .populate(['orders', 'lastOrder'])
+            .orFail(
+                () =>
+                    new NotFoundError(
+                        'Пользователь по заданному id отсутствует в базе'
+                    )
+            )
+
         res.status(200).json(user)
     } catch (error) {
-        next(error)
+        if (error instanceof MongooseError.CastError) {
+            return next(
+                new BadRequestError('Передан невалидный ID пользователя')
+            )
+        }
+
+        return next(error)
     }
 }
 

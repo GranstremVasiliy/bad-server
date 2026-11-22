@@ -1,56 +1,61 @@
-import { Request, Express } from 'express'
-import multer, { FileFilterCallback } from 'multer'
-import { mkdirSync } from 'fs'
-import { join } from 'path'
+import { randomUUID } from 'crypto'
+import { mkdir } from 'fs'
+import { TEMP_UPLOAD_DIR } from '../utils/uploadPaths'
+import multer from 'multer'
+import BadRequestError from '../errors/bad-request-error'
 
-type DestinationCallback = (error: Error | null, destination: string) => void
-type FileNameCallback = (error: Error | null, filename: string) => void
+const MAX_FILE_SIZE = 5 * 1024 * 1024
+
+const allowedTypes = new Map<string, string>([
+    ['image/png', '.png'],
+    ['image/jpeg', '.jpg'],
+    ['image/jpg', '.jpg'],
+    ['image/gif', '.gif'],
+])
 
 const storage = multer.diskStorage({
-    destination: (
-        _req: Request,
-        _file: Express.Multer.File,
-        cb: DestinationCallback
-    ) => {
-        const destinationPath = join(
-            __dirname,
-            process.env.UPLOAD_PATH_TEMP
-                ? `../public/${process.env.UPLOAD_PATH_TEMP}`
-                : '../public'
-        )
-
-        mkdirSync(destinationPath, { recursive: true })
-
-        cb(null, destinationPath)
+    destination: (_req, _file, cb) => {
+        mkdir(TEMP_UPLOAD_DIR, { recursive: true }, (error) => {
+            cb(error, TEMP_UPLOAD_DIR)
+        })
     },
 
-    filename: (
-        _req: Request,
-        file: Express.Multer.File,
-        cb: FileNameCallback
-    ) => {
-        cb(null, file.originalname)
+    filename: (_req, file, cb) => {
+        const extension = allowedTypes.get(file.mimetype)
+
+        if (!extension) {
+            return cb(
+                new BadRequestError(
+                    'Разрешены только изображения PNG, JPEG и GIF'
+                ),
+                ''
+            )
+        }
+
+        return cb(null, `${randomUUID()}${extension}`)
     },
 })
 
-const types = [
-    'image/png',
-    'image/jpg',
-    'image/jpeg',
-    'image/gif',
-    'image/svg+xml',
-]
+const fileMiddleware = multer({
+    storage,
+    limits: {
+        fileSize: MAX_FILE_SIZE,
+        files: 1,
+        fields: 0,
+        parts: 2,
+        fieldNameSize: 100,
+    },
+    fileFilter: (_req, file, cb) => {
+        if (!allowedTypes.has(file.mimetype)) {
+            return cb(
+                new BadRequestError(
+                    'Разрешены только изображения PNG, JPEG и GIF'
+                )
+            )
+        }
 
-const fileFilter = (
-    _req: Request,
-    file: Express.Multer.File,
-    cb: FileFilterCallback
-) => {
-    if (!types.includes(file.mimetype)) {
-        return cb(null, false)
-    }
+        return cb(null, true)
+    },
+})
 
-    return cb(null, true)
-}
-
-export default multer({ storage, fileFilter })
+export default fileMiddleware

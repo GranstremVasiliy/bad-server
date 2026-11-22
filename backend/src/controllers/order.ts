@@ -217,23 +217,8 @@ export const getOrdersCurrentUser = async (
             5
         )
 
-        const options = {
-            skip,
-            limit,
-        }
-
-        const user = await User.findById(userId)
-            .populate({
-                path: 'orders',
-                populate: [
-                    {
-                        path: 'products',
-                    },
-                    {
-                        path: 'customer',
-                    },
-                ],
-            })
+        await User.findById(userId)
+            .select('_id')
             .orFail(
                 () =>
                     new NotFoundError(
@@ -241,31 +226,55 @@ export const getOrdersCurrentUser = async (
                     )
             )
 
-        let orders = user.orders as unknown as IOrder[]
-
-        if (searchRegex) {
-            const searchNumber = Number(req.query.search)
-            const products = await Product.find({ title: searchRegex })
-            const productIds = products.map((product) => product._id)
-
-            orders = orders.filter((order) => {
-                // eslint-disable-next-line max-len
-                const matchesProductTitle = order.products.some((product) =>
-                    productIds.some((id) => id.equals(product._id))
-                )
-                // eslint-disable-next-line max-len
-                const matchesOrderNumber =
-                    !Number.isNaN(searchNumber) &&
-                    order.orderNumber === searchNumber
-
-                return matchesOrderNumber || matchesProductTitle
-            })
+        const filters: FilterQuery<Partial<IOrder>> = {
+            customer: userId,
         }
 
-        const totalOrders = orders.length
-        const totalPages = Math.ceil(totalOrders / limit)
+        if (searchRegex) {
+            const productIds = await Product.find({
+                title: searchRegex,
+            }).distinct('_id')
 
-        orders = orders.slice(options.skip, options.skip + options.limit)
+            const searchConditions: FilterQuery<IOrder>[] = [
+                {
+                    products: {
+                        $in: productIds,
+                    },
+                },
+            ]
+
+            if (typeof req.query.search === 'string') {
+                const searchNumber = Number(req.query.search.trim())
+
+                if (Number.isSafeInteger(searchNumber)) {
+                    searchConditions.push({
+                        orderNumber: searchNumber,
+                    })
+                }
+            }
+
+            filters.$or = searchConditions
+        }
+
+        const [orders, totalOrders] = await Promise.all([
+            Order.find(filters)
+                .sort({
+                    createdAt: -1,
+                    _id: -1,
+                })
+                .skip(skip)
+                .limit(limit)
+                .populate([
+                    'products',
+                    {
+                        path: 'customer',
+                        select: '-password -tokens',
+                    },
+                ]),
+            Order.countDocuments(filters),
+        ])
+
+        const totalPages = Math.ceil(totalOrders / limit)
 
         return res.send({
             orders,
@@ -277,7 +286,7 @@ export const getOrdersCurrentUser = async (
             },
         })
     } catch (error) {
-        next(error)
+        return next(error)
     }
 }
 
