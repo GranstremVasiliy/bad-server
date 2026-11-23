@@ -14,8 +14,7 @@ const passwordSchema = Joi.string()
         'any.invalid': 'Пароль не должен превышать 72 байта в UTF-8',
     })
 
-// eslint-disable-next-line no-useless-escape
-export const phoneRegExp = /^(\+\d+)?(?:\s|-?|\(?\d+\)?)+$/
+export const phoneRegExp = /^\+?[0-9][0-9() -]{0,28}(?![\s\S])/
 
 export enum PaymentType {
     Card = 'card',
