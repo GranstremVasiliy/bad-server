@@ -32,6 +32,7 @@ export type ApiListResponse<Type> = {
 class Api {
     private readonly baseUrl: string
     protected options: RequestInit
+    private csrfRequest: Promise<string> | null = null
 
     constructor(baseUrl: string, options: RequestInit = {}) {
         this.baseUrl = baseUrl
@@ -53,20 +54,68 @@ class Api {
               )
     }
 
+    private getCsrfToken(): Promise<string> {
+        if (this.csrfRequest) {
+            return this.csrfRequest
+        }
+
+        this.csrfRequest = (async () => {
+            try {
+                const response = await fetch(`${this.baseUrl}/auth/csrf`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    cache: 'no-store',
+                })
+
+                const data = await this.handleResponse<{
+                    csrfToken: string
+                }>(response)
+
+                if (typeof data.csrfToken !== 'string' || !data.csrfToken) {
+                    throw new Error('Сервер не вернул CSRF-токен')
+                }
+
+                return data.csrfToken
+            } finally {
+                this.csrfRequest = null
+            }
+        })()
+
+        return this.csrfRequest
+    }
+
     protected async request<T>(
         endpoint: string,
         options: RequestInit
     ): Promise<T> {
-        try {
-            const res = await fetch(`${this.baseUrl}${endpoint}`, {
-                ...this.options,
-                ...options,
-            })
+        const method = (
+            options.method ||
+            this.options.method ||
+            'GET'
+        ).toUpperCase()
 
-            return await this.handleResponse<T>(res)
-        } catch (error) {
-            return Promise.reject(error)
+        const headers = new Headers(this.options.headers)
+
+        new Headers(options.headers).forEach((value, name) => {
+            headers.set(name, value)
+        })
+
+        const requiresCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method)
+
+        if (requiresCsrf) {
+            const csrfToken = await this.getCsrfToken()
+            headers.set('X-CSRF-Token', csrfToken)
         }
+
+        const response = await fetch(`${this.baseUrl}${endpoint}`, {
+            ...this.options,
+            ...options,
+            method,
+            headers,
+            credentials: 'include',
+        })
+
+        return this.handleResponse<T>(response)
     }
 
     private refreshToken = () => {

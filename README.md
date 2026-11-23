@@ -18,3 +18,20 @@ docker compose up -d
 ## Репозиторий
 
 https://github.com/GranstremVasiliy/bad-server
+
+## Защита от CSRF
+
+Для изменяющих запросов POST, PUT, PATCH и DELETE сервер проверяет
+подписанный CSRF-токен из заголовка X-CSRF-Token.
+
+Токен выдаётся через GET /auth/csrf и связан со служебной HttpOnly-cookie
+и текущим refresh-токеном. Frontend получает актуальный токен перед
+изменяющим запросом.
+
+Разрешённые источники задаются через CORS_ALLOWED_ORIGINS.
+Секрет подписи задаётся через CSRF_SECRET.
+Для локального HTTP используется CSRF_COOKIE_SECURE=false,
+для HTTPS — true.
+
+Запросы без токена, с поддельным токеном или без соответствующей cookie
+отклоняются с HTTP 403.
