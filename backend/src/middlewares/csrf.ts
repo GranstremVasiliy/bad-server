@@ -3,7 +3,7 @@ import { NextFunction, Request, Response } from 'express'
 import { REFRESH_TOKEN } from '../config'
 import ForbiddenError from '../errors/forbidden-error'
 
-const CSRF_COOKIE_NAME = 'csrfBinding'
+const CSRF_COOKIE_NAME = '_csrf'
 const CSRF_TOKEN_LIFETIME_MS = 60 * 60 * 1000
 
 const csrfSecret = process.env.CSRF_SECRET
