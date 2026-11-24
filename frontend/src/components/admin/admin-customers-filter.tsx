@@ -9,6 +9,7 @@ import { AppRoute } from '../../utils/constants'
 import Filter from '../filter'
 import styles from './admin.module.scss'
 import { customersFilterFields } from './helpers/customersFilterFields'
+import { FiltersCustomers } from '../../services/slice/customers/type'
 
 export default function AdminFilterCustomers() {
     const navigate = useNavigate()
@@ -18,17 +19,18 @@ export default function AdminFilterCustomers() {
     const filterCustomersOption = useSelector(
         customersSelector.selectFilterOption
     )
-     
 
-    const handleFilter = (filters: Record<string, any>) => {
+    const handleFilter = (filters: Partial<FiltersCustomers>) => {
         dispatch(updateFilter({ ...filters }))
-        const queryParams: { [key: string]: string } = {}
+
+        const queryParams: Record<string, string> = {}
+
         Object.entries(filters).forEach(([key, value]) => {
             if (value) {
-                queryParams[key] =
-                    typeof value === 'object' ? value.value : value.toString()
+                queryParams[key] = value.toString()
             }
         })
+
         setSearchParams(queryParams)
         navigate(
             `${AppRoute.AdminCustomers}?${new URLSearchParams(

@@ -1,10 +1,17 @@
 import { AsyncThunk } from '@reduxjs/toolkit'
 import { useDispatch, useSelector } from '@store/hooks'
-import { RootState } from '@store/store'
+import { AppDispatch, RootState } from '@store/store'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { WebLarekAPI } from '../../../utils/weblarek-api'
 
-interface PaginationResult<_, U> {
+interface PaginatedResponse {
+    pagination: {
+        totalPages: number
+    }
+}
+
+interface PaginationResult<U> {
     data: U[]
     totalPages: number
     currentPage: number
@@ -15,11 +22,17 @@ interface PaginationResult<_, U> {
     setLimit: (limit: number) => void
 }
 
-const usePagination = <T, U>(
-    asyncAction: AsyncThunk<T, Record<string, unknown>, any>,
+type PaginationThunkConfig = {
+    extra: WebLarekAPI
+    state: RootState
+    dispatch: AppDispatch
+}
+
+const usePagination = <T extends PaginatedResponse, U>(
+    asyncAction: AsyncThunk<T, Record<string, unknown>, PaginationThunkConfig>,
     selector: (state: RootState) => U[],
     defaultLimit: number
-): PaginationResult<T, U> => {
+): PaginationResult<U> => {
     const dispatch = useDispatch()
     const data = useSelector(selector)
     const [searchParams, setSearchParams] = useSearchParams()
@@ -32,23 +45,34 @@ const usePagination = <T, U>(
 
     const limit = Number(searchParams.get('limit')) || defaultLimit
 
-    const fetchData = async (params: Record<string, any>) => {
-        const response: any = await dispatch(asyncAction(params))
-        setTotalPages(response.payload.pagination.totalPages)
-    }
-
     useEffect(() => {
+        let active = true
         const params = Object.fromEntries(searchParams.entries())
-        fetchData({ ...params, page: currentPage, limit }).then(() => {
-            if (data.length === 0 && currentPage > 1) {
-                setPage(1)
-            }
-        })
-    }, [currentPage, limit, searchParams])
 
-    const updateURL = (newParams: Record<string, any>) => {
-        3
+        const fetchData = async () => {
+            const response = await dispatch(
+                asyncAction({ ...params, page: currentPage, limit })
+            )
+
+            if (!active || !asyncAction.fulfilled.match(response)) {
+                return
+            }
+
+            setTotalPages(response.payload.pagination.totalPages)
+        }
+
+        void fetchData()
+
+        return () => {
+            active = false
+        }
+    }, [asyncAction, currentPage, dispatch, limit, searchParams])
+
+    const updateURL = (
+        newParams: Record<string, string | number | undefined>
+    ) => {
         const updatedParams = new URLSearchParams(searchParams)
+
         Object.entries(newParams).forEach(([key, value]) => {
             if (value !== undefined) {
                 updatedParams.set(key, value.toString())
@@ -56,6 +80,7 @@ const usePagination = <T, U>(
                 updatedParams.delete(key)
             }
         })
+
         setSearchParams(updatedParams)
     }
 
@@ -77,7 +102,7 @@ const usePagination = <T, U>(
     }
 
     const setLimit = (newLimit: number) => {
-        updateURL({ page: 1, limit: newLimit }) // При изменении лимита возвращаемся на первую страницу
+        updateURL({ page: 1, limit: newLimit })
     }
 
     return {

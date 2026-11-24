@@ -23,7 +23,6 @@ const BtnLinkCustom = createButton(
             return
         }
 
-        // eslint-disable-next-line no-alert
         const input = window.prompt('Введите ссылку с https:// или http://')
 
         if (!input?.trim()) {
