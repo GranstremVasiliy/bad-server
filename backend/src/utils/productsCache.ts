@@ -41,11 +41,11 @@ export const setCachedProducts = (
     const now = Date.now()
 
     // Освобождаем место от просроченных записей.
-    for (const [entryKey, entry] of cache) {
+    cache.forEach((entry, entryKey) => {
         if (entry.expiresAt <= now) {
             cache.delete(entryKey)
         }
-    }
+    })
 
     cache.delete(key)
 
