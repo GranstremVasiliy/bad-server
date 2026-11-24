@@ -43,8 +43,22 @@ jobs:
       - name: Run tests
         run: bash $DIR_TESTS/bin/run.sh
 
-      - name: Show container diagnostics
+           - name: Show container diagnostics
         if: always()
         run: |
           docker compose ps -a
           docker compose logs --no-color --tail=200 backend server
+
+          echo "=== CSRF through nginx ==="
+          curl --silent --show-error --max-time 10 \
+            --dump-header - --output /dev/null \
+            http://localhost/api/auth/csrf-token || true
+
+          echo "=== CSRF directly from backend ==="
+          curl --silent --show-error --max-time 10 \
+            --dump-header - --output /dev/null \
+            http://localhost:3000/auth/csrf-token || true
+
+          echo "=== Cookie name inside backend container ==="
+          docker compose exec -T backend \
+            grep -n CSRF_COOKIE_NAME /app/src/middlewares/csrf.ts || true
