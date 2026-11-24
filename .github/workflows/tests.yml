@@ -16,6 +16,7 @@ env:
 jobs:
   tests:
     runs-on: ubuntu-latest
+
     steps:
       - name: Set up GitHub Actions
         uses: actions/checkout@v4
@@ -34,8 +35,7 @@ jobs:
           set -eu
           CSRF_SECRET="$(openssl rand -hex 32)"
           echo "::add-mask::$CSRF_SECRET"
-          printf 'services:\n  backend:\n    environment:\n      CSRF_SECRET: "%s"\n' \
-            "$CSRF_SECRET" > docker-compose.ci.yml
+          printf 'services:\n  backend:\n    environment:\n      CSRF_SECRET: "%s"\n' "$CSRF_SECRET" > docker-compose.ci.yml
 
       - name: Start project
         run: bash $DIR_TESTS/bin/start_project.sh
@@ -45,19 +45,16 @@ jobs:
 
       - name: Show container diagnostics
         if: always()
-        run: docker compose ps -a
+        shell: bash
+        run: |
+          docker compose ps -a
           docker compose logs --no-color --tail=200 backend server
 
           echo "=== CSRF through nginx ==="
-          curl --silent --show-error --max-time 10 \
-          --dump-header - --output /dev/null \
-          http://localhost/api/auth/csrf-token || true
+          curl --silent --show-error --max-time 10 --dump-header - --output /dev/null http://localhost/api/auth/csrf-token || true
 
           echo "=== CSRF directly from backend ==="
-          curl --silent --show-error --max-time 10 \
-          --dump-header - --output /dev/null \
-          http://localhost:3000/auth/csrf-token || true
+          curl --silent --show-error --max-time 10 --dump-header - --output /dev/null http://localhost:3000/auth/csrf-token || true
 
           echo "=== Cookie name inside backend container ==="
-          docker compose exec -T backend \
-          grep -n CSRF_COOKIE_NAME /app/src/middlewares/csrf.ts || true
+          docker compose exec -T backend grep -n CSRF_COOKIE_NAME /app/src/middlewares/csrf.ts || true
