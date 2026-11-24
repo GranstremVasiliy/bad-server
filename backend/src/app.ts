@@ -31,8 +31,19 @@ app.set('trust proxy', 1)
 app.use(
     cors({
         origin: (origin, callback) => {
-            if (!origin || allowedOrigins.has(origin)) {
-                callback(null, true)
+            if (!origin) {
+                const defaultOrigin = allowedOrigins.has(
+                    'http://localhost:5173'
+                )
+                    ? 'http://localhost:5173'
+                    : Array.from(allowedOrigins)[0]
+
+                callback(null, defaultOrigin || false)
+                return
+            }
+
+            if (allowedOrigins.has(origin)) {
+                callback(null, origin)
                 return
             }
 

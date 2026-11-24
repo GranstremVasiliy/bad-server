@@ -6,6 +6,7 @@ import BadRequestError from '../errors/bad-request-error'
 
 const MAX_INPUT_PIXELS = 16_000_000
 const MAX_FILE_SIZE = 5 * 1024 * 1024
+const MIN_FILE_SIZE = 2 * 1024
 
 async function validateImage(input: Buffer, mimeType: string): Promise<Buffer> {
     try {
@@ -85,6 +86,11 @@ export const uploadFile = async (
 
     try {
         const input = await readFile(file.path)
+
+        if (input.length <= MIN_FILE_SIZE) {
+            throw new BadRequestError('Размер файла должен быть больше 2 КиБ')
+        }
+
         const output = await validateImage(input, file.mimetype)
 
         await writeFile(file.path, Uint8Array.from(output))
