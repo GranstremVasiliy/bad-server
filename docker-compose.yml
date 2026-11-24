@@ -29,8 +29,7 @@ services:
     volumes:
       - ./backend/src:/app/src
       - public:/app/src/public
-    ports:
-      - 3000:3000
+      - upload_temp:/app/upload-temp
     networks:
       - internal
     depends_on:
@@ -54,6 +53,6 @@ volumes:
   frontend:
   public:
   db:
-
+  upload_temp:
 networks:
   internal:

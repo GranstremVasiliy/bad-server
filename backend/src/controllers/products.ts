@@ -1,25 +1,52 @@
 import { NextFunction, Request, Response } from 'express'
 import { constants } from 'http2'
 import { Error as MongooseError } from 'mongoose'
-import { join } from 'path'
 import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
 import Product from '../models/product'
 import movingFile from '../utils/movingFile'
+import getPagination from '../utils/pagination'
+import { PUBLIC_UPLOAD_DIR, TEMP_UPLOAD_DIR } from '../utils/uploadPaths'
+import {
+    clearProductsCache,
+    getCachedProducts,
+    getProductsCacheVersion,
+    setCachedProducts,
+} from '../utils/productsCache'
 
 // GET /product
 const getProducts = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { page = 1, limit = 5 } = req.query
-        const options = {
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+        const { page, limit, skip } = getPagination(
+            req.query.page,
+            req.query.limit,
+            5
+        )
+
+        // Используем проверенные значения, а не исходный req.query.
+        const cacheKey = `${page}:${limit}`
+        const cachedBody = getCachedProducts(cacheKey)
+
+        if (cachedBody !== undefined) {
+            res.setHeader('X-Cache', 'HIT')
+
+            return res.type('application/json').send(cachedBody)
         }
+
+        // Запоминаем версию до асинхронного обращения к базе.
+        const requestVersion = getProductsCacheVersion()
+
+        const options = {
+            skip,
+            limit,
+        }
+
         const products = await Product.find({}, null, options)
         const totalProducts = await Product.countDocuments({})
-        const totalPages = Math.ceil(totalProducts / Number(limit))
-        return res.send({
+        const totalPages = Math.ceil(totalProducts / limit)
+
+        const body = JSON.stringify({
             items: products,
             pagination: {
                 totalProducts,
@@ -28,6 +55,13 @@ const getProducts = async (req: Request, res: Response, next: NextFunction) => {
                 pageSize: Number(limit),
             },
         })
+
+        // Результат не попадёт в кэш, если за время чтения товар изменился.
+        setCachedProducts(cacheKey, body, requestVersion)
+
+        res.setHeader('X-Cache', 'MISS')
+
+        return res.type('application/json').send(body)
     } catch (err) {
         return next(err)
     }
@@ -44,11 +78,7 @@ const createProduct = async (
 
         // Переносим картинку из временной папки
         if (image) {
-            movingFile(
-                image.fileName,
-                join(__dirname, `../public/${process.env.UPLOAD_PATH_TEMP}`),
-                join(__dirname, `../public/${process.env.UPLOAD_PATH}`)
-            )
+            await movingFile(image.fileName, TEMP_UPLOAD_DIR, PUBLIC_UPLOAD_DIR)
         }
 
         const product = await Product.create({
@@ -58,6 +88,9 @@ const createProduct = async (
             price,
             title,
         })
+
+        clearProductsCache()
+
         return res.status(constants.HTTP_STATUS_CREATED).send(product)
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
@@ -83,13 +116,12 @@ const updateProduct = async (
         const { productId } = req.params
         const { image } = req.body
 
-        // Переносим картинку из временной папки
-        if (image) {
-            movingFile(
-                image.fileName,
-                join(__dirname, `../public/${process.env.UPLOAD_PATH_TEMP}`),
-                join(__dirname, `../public/${process.env.UPLOAD_PATH}`)
-            )
+        const currentProduct = await Product.findById(productId).orFail(
+            () => new NotFoundError('Нет товара по заданному id')
+        )
+
+        if (image && image.fileName !== currentProduct.image?.fileName) {
+            await movingFile(image.fileName, TEMP_UPLOAD_DIR, PUBLIC_UPLOAD_DIR)
         }
 
         const product = await Product.findByIdAndUpdate(
@@ -103,6 +135,7 @@ const updateProduct = async (
             },
             { runValidators: true, new: true }
         ).orFail(() => new NotFoundError('Нет товара по заданному id'))
+        clearProductsCache()
         return res.send(product)
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
@@ -132,6 +165,9 @@ const deleteProduct = async (
         const product = await Product.findByIdAndDelete(productId).orFail(
             () => new NotFoundError('Нет товара по заданному id')
         )
+
+        clearProductsCache()
+
         return res.send(product)
     } catch (error) {
         if (error instanceof MongooseError.CastError) {

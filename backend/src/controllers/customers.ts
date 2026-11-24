@@ -1,8 +1,16 @@
 import { NextFunction, Request, Response } from 'express'
-import { FilterQuery } from 'mongoose'
+import { FilterQuery, Error as MongooseError } from 'mongoose'
 import NotFoundError from '../errors/not-found-error'
 import Order from '../models/order'
 import User, { IUser } from '../models/user'
+import BadRequestError from '../errors/bad-request-error'
+import ConflictError from '../errors/conflict-error'
+import getPagination from '../utils/pagination'
+import getSearchRegex from '../utils/search'
+import getSorting from '../utils/sorting'
+import getNumberRange from '../utils/numberRange'
+import getDateRange from '../utils/dateRange'
+import Product from '../models/product'
 
 // TODO: Добавить guard admin
 // eslint-disable-next-line max-len
@@ -14,10 +22,6 @@ export const getCustomers = async (
 ) => {
     try {
         const {
-            page = 1,
-            limit = 10,
-            sortField = 'createdAt',
-            sortOrder = 'desc',
             registrationDateFrom,
             registrationDateTo,
             lastOrderDateFrom,
@@ -26,98 +30,104 @@ export const getCustomers = async (
             totalAmountTo,
             orderCountFrom,
             orderCountTo,
-            search,
         } = req.query
+
+        const { page, limit, skip } = getPagination(
+            req.query.page,
+            req.query.limit
+        )
+
+        const searchRegex = getSearchRegex(req.query.search)
 
         const filters: FilterQuery<Partial<IUser>> = {}
 
-        if (registrationDateFrom) {
-            filters.createdAt = {
-                ...filters.createdAt,
-                $gte: new Date(registrationDateFrom as string),
-            }
+        const registrationDateRange = getDateRange(
+            registrationDateFrom,
+            registrationDateTo,
+            'registrationDateFrom',
+            'registrationDateTo'
+        )
+
+        if (registrationDateRange) {
+            filters.createdAt = registrationDateRange
         }
 
-        if (registrationDateTo) {
-            const endOfDay = new Date(registrationDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
-            filters.createdAt = {
-                ...filters.createdAt,
-                $lte: endOfDay,
-            }
+        const lastOrderDateRange = getDateRange(
+            lastOrderDateFrom,
+            lastOrderDateTo,
+            'lastOrderDateFrom',
+            'lastOrderDateTo'
+        )
+
+        if (lastOrderDateRange) {
+            filters.lastOrderDate = lastOrderDateRange
         }
 
-        if (lastOrderDateFrom) {
-            filters.lastOrderDate = {
-                ...filters.lastOrderDate,
-                $gte: new Date(lastOrderDateFrom as string),
-            }
+        const totalAmountRange = getNumberRange(
+            totalAmountFrom,
+            totalAmountTo,
+            'totalAmountFrom',
+            'totalAmountTo'
+        )
+
+        if (totalAmountRange) {
+            filters.totalAmount = totalAmountRange
         }
 
-        if (lastOrderDateTo) {
-            const endOfDay = new Date(lastOrderDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
-            filters.lastOrderDate = {
-                ...filters.lastOrderDate,
-                $lte: endOfDay,
-            }
+        const orderCountRange = getNumberRange(
+            orderCountFrom,
+            orderCountTo,
+            'orderCountFrom',
+            'orderCountTo',
+            true
+        )
+
+        if (orderCountRange) {
+            filters.orderCount = orderCountRange
         }
 
-        if (totalAmountFrom) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $gte: Number(totalAmountFrom),
-            }
-        }
+        if (searchRegex) {
+            const productIds = await Product.find({
+                title: searchRegex,
+            }).distinct('_id')
 
-        if (totalAmountTo) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $lte: Number(totalAmountTo),
-            }
-        }
-
-        if (orderCountFrom) {
-            filters.orderCount = {
-                ...filters.orderCount,
-                $gte: Number(orderCountFrom),
-            }
-        }
-
-        if (orderCountTo) {
-            filters.orderCount = {
-                ...filters.orderCount,
-                $lte: Number(orderCountTo),
-            }
-        }
-
-        if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
-            const orders = await Order.find(
-                {
-                    $or: [{ deliveryAddress: searchRegex }],
-                },
-                '_id'
-            )
-
-            const orderIds = orders.map((order) => order._id)
+            const customerIds = await Order.find({
+                $or: [
+                    {
+                        deliveryAddress: searchRegex,
+                    },
+                    {
+                        products: {
+                            $in: productIds,
+                        },
+                    },
+                ],
+            }).distinct('customer')
 
             filters.$or = [
-                { name: searchRegex },
-                { lastOrder: { $in: orderIds } },
+                {
+                    name: searchRegex,
+                },
+                {
+                    _id: {
+                        $in: customerIds,
+                    },
+                },
             ]
         }
 
-        const sort: { [key: string]: any } = {}
-
-        if (sortField && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
-        }
+        const sort = getSorting(req.query.sortField, req.query.sortOrder, [
+            'createdAt',
+            'name',
+            'totalAmount',
+            'orderCount',
+            'lastOrderDate',
+        ])
 
         const options = {
             sort,
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+            skip,
+            limit,
         }
 
         const users = await User.find(filters, null, options).populate([
@@ -137,15 +147,15 @@ export const getCustomers = async (
         ])
 
         const totalUsers = await User.countDocuments(filters)
-        const totalPages = Math.ceil(totalUsers / Number(limit))
+        const totalPages = Math.ceil(totalUsers / limit)
 
         res.status(200).json({
             customers: users,
             pagination: {
                 totalUsers,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: page,
+                pageSize: limit,
             },
         })
     } catch (error) {
@@ -161,13 +171,24 @@ export const getCustomerById = async (
     next: NextFunction
 ) => {
     try {
-        const user = await User.findById(req.params.id).populate([
-            'orders',
-            'lastOrder',
-        ])
+        const user = await User.findById(req.params.id)
+            .populate(['orders', 'lastOrder'])
+            .orFail(
+                () =>
+                    new NotFoundError(
+                        'Пользователь по заданному id отсутствует в базе'
+                    )
+            )
+
         res.status(200).json(user)
     } catch (error) {
-        next(error)
+        if (error instanceof MongooseError.CastError) {
+            return next(
+                new BadRequestError('Передан невалидный ID пользователя')
+            )
+        }
+
+        return next(error)
     }
 }
 
@@ -179,11 +200,32 @@ export const updateCustomer = async (
     next: NextFunction
 ) => {
     try {
+        const { name, email, phone } = req.body
+
+        const updates: {
+            name?: string
+            email?: string
+            phone?: string
+        } = {}
+
+        if (name !== undefined) {
+            updates.name = name
+        }
+
+        if (email !== undefined) {
+            updates.email = email
+        }
+
+        if (phone !== undefined) {
+            updates.phone = phone
+        }
+
         const updatedUser = await User.findByIdAndUpdate(
             req.params.id,
-            req.body,
+            { $set: updates },
             {
                 new: true,
+                runValidators: true,
             }
         )
             .orFail(
@@ -193,9 +235,26 @@ export const updateCustomer = async (
                     )
             )
             .populate(['orders', 'lastOrder'])
+
         res.status(200).json(updatedUser)
     } catch (error) {
-        next(error)
+        if (error instanceof MongooseError.ValidationError) {
+            return next(new BadRequestError(error.message))
+        }
+
+        if (error instanceof MongooseError.CastError) {
+            return next(
+                new BadRequestError('Передан невалидный ID пользователя')
+            )
+        }
+
+        if (error instanceof Error && error.message.includes('E11000')) {
+            return next(
+                new ConflictError('Пользователь с таким email уже существует')
+            )
+        }
+
+        return next(error)
     }
 }
 

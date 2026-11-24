@@ -14,6 +14,7 @@ import { getOrderByNumber } from '../../services/slice/orders/thunk'
 import { adapterOrderFromServer } from '../../utils/adapterOrderFromServer'
 import { Preloader } from '../preloader'
 import styles from './admin.module.scss'
+import sanitizeHtml from '../../utils/sanitizeHtml'
 
 const ActionsButton = () => {
     const number = useParams().number || ''
@@ -99,15 +100,13 @@ export default function AdminOrderDetail() {
                 key: 'comment',
                 label: 'Комментарий к заказу',
                 extraClass: styles.profile__gridRowFullWidth,
-                render: (dataInfo: OrderData) => (
-                    <>
-                        <div
-                            dangerouslySetInnerHTML={{
-                                __html: dataInfo.comment,
-                            }}
-                        />
-                    </>
-                ),
+                render: (dataInfo: OrderData) => {
+                    const markup = {
+                        __html: sanitizeHtml(dataInfo.comment || ''),
+                    }
+
+                    return <div dangerouslySetInnerHTML={markup} />
+                },
             },
             {
                 key: 'productNames',
@@ -124,7 +123,7 @@ export default function AdminOrderDetail() {
                 extraClass: styles.admin__gridRowFullWidth,
             },
         ],
-        [orderData]
+        [orderData, navigate]
     )
 
     if (!orderData) {

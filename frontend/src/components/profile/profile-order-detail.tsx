@@ -11,6 +11,7 @@ import { getCurrentUserOrderByNumber } from '../../services/slice/profile-orders
 import { adapterOrderFromServer } from '../../utils/adapterOrderFromServer'
 import { Preloader } from '../preloader'
 import styles from './profile.module.scss'
+import sanitizeHtml from '../../utils/sanitizeHtml'
 
 const CloseButton = () => {
     const navigate = useNavigate()
@@ -21,7 +22,6 @@ export default function ProfileOrderDetail() {
     const number = useParams().number || ''
     const dispatch = useDispatch()
     const orderData = useSelector(selectOrderByNumber(+number))
-    console.log(orderData)
 
     useEffect(() => {
         if (!orderData) {
@@ -68,19 +68,17 @@ export default function ProfileOrderDetail() {
                 key: 'comment',
                 label: 'Ваш комментарий к заказу',
                 extraClass: styles.profile__gridRowFullWidth,
-                render: (dataInfo: OrderData) => (
-                    <>
-                        {dataInfo.comment ? (
-                            <div
-                                dangerouslySetInnerHTML={{
-                                    __html: dataInfo.comment,
-                                }}
-                            />
-                        ) : (
-                            'Комментариев нет'
-                        )}
-                    </>
-                ),
+                render: (dataInfo: OrderData) => {
+                    if (!dataInfo.comment) {
+                        return <span>Комментариев нет</span>
+                    }
+
+                    const markup = {
+                        __html: sanitizeHtml(dataInfo.comment),
+                    }
+
+                    return <div dangerouslySetInnerHTML={markup} />
+                },
             },
         ],
         [orderData]
