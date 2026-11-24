@@ -11,6 +11,7 @@ env:
   DIR_TESTS: /tmp/tests-bad-server
   REP_TESTS: https://github.com/Yandex-Practicum/tests-bad-server.git
   REPO: ${{ github.event.repository.name }}
+  COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
 
 jobs:
   tests:
@@ -27,8 +28,14 @@ jobs:
       - name: Get testing lib
         run: set -eu && git clone --depth 1 $REP_TESTS $DIR_TESTS
 
-      - name: Show project startup script
-        run: cat "$DIR_TESTS/bin/start_project.sh"
+      - name: Prepare CSRF secret for CI
+        shell: bash
+        run: |
+          set -eu
+          CSRF_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$CSRF_SECRET"
+          printf 'services:\n  backend:\n    environment:\n      CSRF_SECRET: "%s"\n' \
+            "$CSRF_SECRET" > docker-compose.ci.yml
 
       - name: Start project
         run: bash $DIR_TESTS/bin/start_project.sh
