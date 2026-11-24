@@ -69,7 +69,7 @@ const bootstrap = async () => {
         console.error(error)
 
         setTimeout(() => {
-            void bootstrap()
+            bootstrap()
         }, 5000)
     }
 }
