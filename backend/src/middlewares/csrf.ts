@@ -6,15 +6,27 @@ import ForbiddenError from '../errors/forbidden-error'
 const CSRF_COOKIE_NAME = '_csrf'
 const CSRF_TOKEN_LIFETIME_MS = 60 * 60 * 1000
 
-const csrfSecret = process.env.CSRF_SECRET
+function getCsrfSecret(): string {
+    const configuredSecret = process.env.CSRF_SECRET
 
-if (!csrfSecret || Buffer.byteLength(csrfSecret, 'utf8') < 32) {
-    throw new Error(
-        'CSRF_SECRET должен содержать случайный секрет длиной не менее 32 байт'
-    )
+    if (configuredSecret !== undefined) {
+        if (Buffer.byteLength(configuredSecret, 'utf8') < 32) {
+            throw new Error(
+                'CSRF_SECRET должен содержать случайный секрет длиной не менее 32 байт'
+            )
+        }
+
+        return configuredSecret
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('В production необходимо задать постоянный CSRF_SECRET')
+    }
+
+    return randomBytes(32).toString('hex')
 }
 
-const secret: string = csrfSecret
+const secret = getCsrfSecret()
 
 const csrfCookieOptions = {
     httpOnly: true,
