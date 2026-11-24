@@ -8,6 +8,12 @@ import Product from '../models/product'
 import movingFile from '../utils/movingFile'
 import getPagination from '../utils/pagination'
 import { PUBLIC_UPLOAD_DIR, TEMP_UPLOAD_DIR } from '../utils/uploadPaths'
+import {
+    clearProductsCache,
+    getCachedProducts,
+    getProductsCacheVersion,
+    setCachedProducts,
+} from '../utils/productsCache'
 
 // GET /product
 const getProducts = async (req: Request, res: Response, next: NextFunction) => {
@@ -18,14 +24,29 @@ const getProducts = async (req: Request, res: Response, next: NextFunction) => {
             5
         )
 
+        // Используем проверенные значения, а не исходный req.query.
+        const cacheKey = `${page}:${limit}`
+        const cachedBody = getCachedProducts(cacheKey)
+
+        if (cachedBody !== undefined) {
+            res.setHeader('X-Cache', 'HIT')
+
+            return res.type('application/json').send(cachedBody)
+        }
+
+        // Запоминаем версию до асинхронного обращения к базе.
+        const requestVersion = getProductsCacheVersion()
+
         const options = {
             skip,
             limit,
         }
+
         const products = await Product.find({}, null, options)
         const totalProducts = await Product.countDocuments({})
         const totalPages = Math.ceil(totalProducts / limit)
-        return res.send({
+
+        const body = JSON.stringify({
             items: products,
             pagination: {
                 totalProducts,
@@ -34,6 +55,13 @@ const getProducts = async (req: Request, res: Response, next: NextFunction) => {
                 pageSize: Number(limit),
             },
         })
+
+        // Результат не попадёт в кэш, если за время чтения товар изменился.
+        setCachedProducts(cacheKey, body, requestVersion)
+
+        res.setHeader('X-Cache', 'MISS')
+
+        return res.type('application/json').send(body)
     } catch (err) {
         return next(err)
     }
@@ -60,6 +88,9 @@ const createProduct = async (
             price,
             title,
         })
+
+        clearProductsCache()
+
         return res.status(constants.HTTP_STATUS_CREATED).send(product)
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
@@ -104,6 +135,7 @@ const updateProduct = async (
             },
             { runValidators: true, new: true }
         ).orFail(() => new NotFoundError('Нет товара по заданному id'))
+        clearProductsCache()
         return res.send(product)
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
@@ -133,6 +165,9 @@ const deleteProduct = async (
         const product = await Product.findByIdAndDelete(productId).orFail(
             () => new NotFoundError('Нет товара по заданному id')
         )
+
+        clearProductsCache()
+
         return res.send(product)
     } catch (error) {
         if (error instanceof MongooseError.CastError) {

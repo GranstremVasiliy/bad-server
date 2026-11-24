@@ -7,5 +7,6 @@ export default function serveStatic(baseDir: string) {
         index: false,
         redirect: false,
         fallthrough: true,
+        maxAge: '1h',
     })
 }
